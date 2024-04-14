@@ -1,3 +1,5 @@
+import pandas as pd
+
 from .annotate import Annotation
 import math
 from dataclasses import dataclass, field
@@ -104,7 +106,7 @@ class AABB:
     def collision_force(self, other: 'AABB') -> Point:
         if self.collide(other):
             direction = self.position - other.position
-            return direction / direction.norm()
+            return direction / (direction.norm() + 1e-6)
 
         return Point(0, 0)
 
@@ -123,18 +125,37 @@ class AABB:
 
 @dataclass
 class AnnotationWithPhysics(Annotation):
+    xmin: float
+    xmax: float
+    ymin: float
+    ymax: float
     bbox: AABB = None
     force: Point = field(default_factory=lambda: Point(0, 0))
     velocity: Point = field(default_factory=lambda: Point(0, 0))
-    damping: float = 0.9
+    damping: float = 0.2
     spring: float = 0.1
     offset: float = 1
+    collision: float = 5
 
     def __post_init__(self):
+        right = abs(self.x - self.xmax)
+        left = abs(self.x - self.xmin)
+        top = abs(self.y - self.ymax)
+        bottom = abs(self.y - self.ymin)
+        d_min = min(right, left, top, bottom)
+        if d_min == right:
+            x, y = self.xmax, self.y
+        elif d_min == left:
+            x, y = self.xmin, self.y
+        elif d_min == top:
+            x, y = self.x, self.ymax
+        else:
+            x, y = self.x, self.ymin
+
         self.bbox = AABB(
-            position=Point(self.x, self.y),
-            width=(self.font_size + 2 * self.margin) * len(self.text),
-            height=self.font_size + 2 * self.margin
+            position=Point(x, y),
+            width=(self.font_size + 2 * self.margin * self.font_size) * len(self.text),
+            height=self.font_size + 2 * self.margin * self.font_size
         )
 
     def plot_bbox(self, fig, **kwargs):
@@ -142,26 +163,47 @@ class AnnotationWithPhysics(Annotation):
 
     def collide(self, other: 'AnnotationWithPhysics'):
         force = self.bbox.collision_force(other.bbox)
-        self.force += force
-        other.force -= force
+        self.force += force * self.collision
+        other.force -= force * other.collision
 
     def spring_force(self):
         direction = self.bbox.position - Point(self.x, self.y)
-        norm = direction.norm() + 1e-6
-        return (direction / norm) * -self.spring * (norm - self.offset)
+        norm = direction.norm()
+        if norm == 0:
+            unit = Point(0, 1)
+        else:
+            unit = direction / norm
+        magnitude = norm - self.offset * self.font_size
+        magnitude = 2 * magnitude if magnitude < 0 else magnitude**2
+
+        return -unit * magnitude
 
     def apply_forces(self, dt: float):
         self.force += self.spring_force()
         self.velocity += self.force * dt
-        self.bbox.position += self.velocity * dt
-        self.velocity *= self.damping
+        displacement = self.velocity * dt
+        self.bbox.position += displacement
+        self.velocity *= (1 - self.damping)
+        return displacement
 
     def reset_force(self):
         self.force = Point(0, 0)
 
     def step(self, dt: float = 0.1):
-        self.apply_forces(dt)
+        displacement = self.apply_forces(dt)
         self.reset_force()
+        return displacement
+
+    def annotate(self, fig: go.Figure):
+        fig.add_annotation(
+            x=self.x,
+            y=self.y,
+            ax=self.bbox.position.x,
+            ay=self.bbox.position.y,
+            axref='x',
+            ayref='y',
+            text=self.text
+        )
 
 # class DeterminantResult(Enum):
 #     left = auto()

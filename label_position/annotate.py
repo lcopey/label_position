@@ -2,9 +2,12 @@ import numpy as np
 
 from dataclasses import dataclass, field
 
+import pandas as pd
+
 
 @dataclass
 class Annotation:
+    """Font size in data unit !"""
     x: float
     y: float
     margin: float
